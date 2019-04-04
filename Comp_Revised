@@ -1,0 +1,1130 @@
+#---------------------------------------
+# Compliance script for SQL Servers
+#
+
+#---------------------------------------
+
+$NUMBER_OF_CIS_RULES=24
+
+
+$CIS_Reference = ( 'Reserved', 'Corp.SEG.22.4', '3.8', 'Corp.SEG.22.3', '3.2', 'OUT of SCOPE', '3.10',
+                            '3.11', '2.10', '2.6', '2.7', '2.8', '2.15',
+                            '2.1', '2.2', '2.3', '2.4', '2.5', '2.9',
+                            '2.12', '5.1', '8.1', '5.2', '5.3', '5.4' )
+
+
+$CIS_Value = ( 'Reserved', 'Value 01', 'Value 02', 'Value 03', 'Value 04', 'Value 05', 'Value 06',
+                           'Value 07', 'Value 08', 'Value 09', 'Value 10', 'Value 11', 'Value 12',
+                           'Value 13', 'Value 14', 'Value 15', 'Value 16', 'Value 17', 'Value 18',
+                           'Value 19', 'VAlue 20', 'Value 21', 'Value 22', 'Value 23', 'Value 24' )
+
+
+$CIS_Status = ( 'Reserved', 'Status 01', 'Status 02', 'Status 03', 'Status 04', 'Status 05', 'Status 06',
+                            'Status 07', 'Status 08', 'Status 09', 'Status 10', 'Status 11', 'Status 12',
+                            'Status 13', 'Status 14', 'Status 15', 'Status 16', 'Status 17', 'Status 18',
+                            'Status 19', 'Status 20', 'Status 21', 'Status 22', 'Status 23', 'Status 24' )
+
+
+
+for ($i=1; $i -le $NUMBER_OF_CIS_RULES; $i++) {
+  $CIS_Status[$i] = "Empty"
+  $CIS_Value[$i] = "Empty"
+}
+
+#---------------------------------------
+#Path to script and output files
+#---------------------------------------
+$OutputFileDir = $PSCommandPath | Split-Path -Parent
+
+$Compname = Get-ChildItem Env:Computername 
+$Compname = $Compname.Value
+$OutputFile = "${OutputFileDir}\DBCompliance.txt"
+
+
+#$ErrorActionPreference = Stop
+if (test-path -Path ${OutputFile}){
+    Remove-Item ${OutputFile}
+}
+
+#---------------------------------------
+# output the header row
+#---------------------------------------
+$Tab = [char]9
+
+$TimeOfDay = Get-Date -Format o            
+"${Compname} begin execution ${TimeOfDay}" | Out-File -encoding ascii -FilePath $OutputFile 
+
+$Tab = [char]9
+"RUN_TYPE${tab}LOCAL_REFERENCE_NUMBER${tab}CIS_REFERENCE${tab}VALUE${tab}COMPNAME${tab}DATABASENAME${tab}STATUS" | Out-File -encoding ascii -FilePath $OutputFile -Append
+#"Hostname${tab}InstanceName${tab}DatabaseName${tab}Ref1${tab}Ref2${tab}Ref3${tab}Ref4${tab}Ref5${tab}Ref6${tab}Ref7${tab}Ref8${tab}Ref9${tab}Ref10${tab}Ref11${tab}Ref12${tab}Ref13${tab}Ref14${tab}Ref15${tab}Ref16${tab}Ref17${tab}Ref18${tab}Ref19${tab}Ref20${tab}Ref21${tab}Ref22${tab}Ref23${tab}Ref24" | Out-File -encoding ascii -FilePath $OutputFile -Append
+
+#---------------------------------------
+# Host level checks
+#---------------------------------------
+
+#Initialize Host level vars
+$Ref7=""
+$Ref21=""
+
+#---------------------------------------
+# Ref21 CIS 8.1
+#---------------------------------------
+# Get the StartType of the SQLBrowser from the registry and translate number to words
+#---------------------------------------
+try {
+    #write-host "Ref21"
+    #$SQLBrowser = Get-Service -Name "SQLBrowser" -ErrorAction Stop
+    #$Ref21=$SQLBrowser.StartType
+    $TempRef21=Get-ItemProperty -path "HKLM:\System\CurrentControlSet\services\SQLBrowser" -name "Start" -ErrorAction Stop
+    #$TempRef21
+    $CIS_Status[21]="Fail"
+    Switch ($TempRef21.Start){
+        0 {
+            $Ref21 = "Boot"
+            break
+        }
+        1 {
+            $Ref21 = "System"
+            break
+        }
+        2 {
+            $Ref21 = "Automatic"
+            break
+        }
+        3 {
+            $Ref21 = "Manual"
+            break
+        }
+        4 {
+            $Ref21 = "Disabled"
+            $CIS_Status[21] = "Pass"
+            break
+        }
+    }
+  $CIS_Value[21] = $Ref21
+  $A_Value = $CIS_Value[21]
+  #write-host "Just set 21 [${A_Value}]"
+}
+catch{
+    $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+    $Ref21="ERROR:${tempError}"
+    $CIS_Status[21] = "Fail"
+    $CIS_Value[21] = $Ref21
+    $error.Clear()
+}
+#Write-host "Ref21=$Ref21"
+
+#---------------------------------------
+# Ref7 CIS 3.11
+#---------------------------------------
+# Get the public role's proxy access in the msdb 
+#---------------------------------------
+try {
+    #write-host "Ref7"
+    $CIS_Status[07] = "Pass"
+    $CIS_Value[07] = ""
+
+    $TempRef7  = Invoke-Sqlcmd -Query "SELECT sp.[name] AS proxyname FROM dbo.sysproxylogin spl JOIN sys.database_principals dp ON dp.sid = spl.sid JOIN sysproxies sp ON sp.proxy_id = spl.proxy_id WHERE principal_id = USER_ID('public');" -Database "msdb" -ErrorAction Stop
+    foreach ($publicaccess in $TempRef7) {
+        $Ref7 += "Name=$($publicaccess.proxyname);"
+        $CIS_Status[07] = "Fail"
+        write-host "FAIL Ref7 DETAIL ${publicaccess}.proxyname}"
+        $CIS_Value[07] = "See output"
+    }
+
+}
+catch {
+    write-host "Error in Ref7 $Error"
+    $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+    $error.Clear()
+    #---------------------------------------
+    # If Invoke-SQLcmd option is not installed run the SQL native cmd
+    #---------------------------------------
+    $Ref7=""
+    if ($tempError -Like "*is not recognized as the name of a*") {
+        $Ref7temp = sqlcmd -d msdb -Q "SELECT sp.[name] AS proxyname FROM dbo.sysproxylogin spl JOIN sys.database_principals dp ON dp.sid = spl.sid JOIN sysproxies sp ON sp.proxy_id = spl.proxy_id WHERE principal_id = USER_ID('public');"  -h -1 -X | Out-String
+        
+        foreach ($publicaccess in $Ref7temp) {
+            $publicaccess = $publicaccess.trim()
+            if (($publicaccess -ne "") -and ($publicaccess -like "rows affected")){
+                $Ref7 += "Name=$($publicaccess);"
+             }
+        }
+    }
+    else {
+        $Ref7="ERROR:${tempError}"
+    }
+}
+#Write-host "Ref7=$Ref7"
+
+#---------------------------------------
+# Instance level checks
+#---------------------------------------
+# Get SQL instances from the registry - full name of instance may or may not contain the server name if the name of the Instance is MSSQSERVER
+# This also gets the internal name of the instance for future registry queries
+#---------------------------------------
+$SQLInstances = Get-ItemProperty 'HKLM:\Software\Microsoft\Microsoft SQL Server\Instance Names\SQL' | Select-Object * -Exclude PS*
+
+$arraysize=$SQLInstances.PSObject.Properties.name.count
+for($counter=0; ($counter -lt $arraysize); $counter++ ) {
+    #---------------------------------------
+    # If there's only one element, Powershell doesn't see it as an array so you can't address the Instances as an array
+    #---------------------------------------
+    if ($arraysize -eq 1) {
+        $tempname = $SQLInstances.PSObject.Properties.name
+        if ($tempname -eq "MSSQLSERVER") {
+            $instname = $Compname
+            $tempinst = $SQLInstances.PSObject.Properties.value
+        } else {
+            $tempinst = $SQLInstances.PSObject.Properties.value
+            $instname = "$Compname\$tempinst"
+        }
+    }
+    #---------------------------------------
+    # Instance determination if there are more than one instance
+    #---------------------------------------
+    else {
+        $tempname = $(${SQLInstances}.PSObject.Properties.name)[$counter]
+        if ($tempname -eq "MSSQLSERVER") {
+            $instname = $Compname
+            $tempinst = $SQLInstances.PSObject.Properties.value[$counter]
+        }
+        else
+        {
+            $tempinst = $SQLInstances.PSObject.Properties.value[$counter]
+            $instname = "$Compname\$tempname"
+        }
+    }
+    write-host "Instance=$instname"
+    write-host "Tempname=$tempname"
+    write-host "TempInst=$tempinst"
+    #---------------------------------------
+    #Init Instance level variables
+    #---------------------------------------
+    $Ref1 = ""
+    $Ref2 = ""
+    $Ref6 = ""
+    $Ref8 = ""
+    $Ref9 = ""
+    $Ref10 = ""
+    $Ref11 = ""
+    $Ref12 = ""
+    $Ref13 = ""
+    $Ref14 = ""
+    $Ref15 = ""
+    $Ref16 = ""
+    $Ref17 = ""
+    $Ref18 = ""
+    $Ref19 = ""
+    $Ref20 = ""
+    $Ref22 = ""
+    $Ref23 = ""
+    $Ref24 = ""
+    #---------------------------------------
+    # Ref6 CIS 3.10
+    #---------------------------------------
+    # See if any local groups have logins
+    #---------------------------------------
+    try {
+        # Get local groups that have logins
+        #write-host "Ref6"
+        $CIS_Status[06] = "Pass"
+        $CIS_Value[06] = ""
+
+        $TempRef6  = Invoke-Sqlcmd -Query "SELECT pr.[name] AS LocalGroupName, pe.[permission_name], pe.[state_desc] FROM sys.server_principals pr JOIN sys.server_permissions pe ON pr.[principal_id] = pe.[grantee_principal_id] WHERE pr.[type_desc] = 'WINDOWS_GROUP' AND pr.[name] like CAST(SERVERPROPERTY('MachineName') AS nvarchar) + '%';" -ServerInstance $instname -ErrorAction Stop
+        foreach ($localgroup in $TempRef6) {
+            # Get local group properties
+            $LocalUsers = Get-LocalGroupMember -Group $($localgroup.localgroupname)
+            $tempusers=""
+            # Get users in the local group
+            foreach ($localuser in $LocalUsers){
+               $CIS_Status[06] = "Fail"
+               $tempUsers+="{$localuser}.name\"
+               $CIS_Value[06]=$localuser.name
+            }
+            $Ref6 += "Groupname=$($localgroup.localgroupname),Permission=$($localgroup.permission_name),State_Desc=$($localgroup.state_desc),Users=$tempUsers;"
+        }
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+        $CIS_Status[06] = "Fail"
+        $CIS_Value[06]=$tempError
+        $error.Clear()
+        #---------------------------------------
+        # If Invoke-SQLcmd option is not installed run the SQL native cmd
+        #---------------------------------------
+        $Ref6=""
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            [string]$Ref6temp = sqlcmd -S $instname -Q "SELECT pr.[name] AS LocalGroupName, pe.[permission_name], pe.[state_desc] FROM sys.server_principals pr JOIN sys.server_permissions pe ON pr.[principal_id] = pe.[grantee_principal_id] WHERE pr.[type_desc] = 'WINDOWS_GROUP' AND pr.[name] like CAST(SERVERPROPERTY('MachineName') AS nvarchar) + '%';" -h -1 -X | Out-String
+            #$REf6temp
+            [array]$Ref6split=$Ref6temp.Split("`r`n")
+
+            foreach ($localgroup in $Ref6split) {
+                [string]$subname = $localgroup
+                if ($subname.Length -eq 318) {
+                    [string]$groupname = $subname.Substring(0,129).Trim()
+                    [string]$permname = $subname.Substring(129,129).Trim()
+                    [string]$descname = $subname.Substring(258,58).trim()
+
+                    # Get local group properties
+                    $LocalUsers = Get-LocalGroupMember -Group $($groupname)
+                    $tempusers=""
+                    # Get users in the local group
+                    foreach ($localuser in $LocalUsers){
+                        $tempUsers+="{$localuser}.name\"
+                    }
+                    $Ref6 += "Groupname=$($groupname),Permission=$($permname),State_Desc=$($descname),Users=$tempUsers;"
+                }
+            }
+        }
+        else {
+            $Ref6="ERROR:(${tempError})"
+            $error.Clear()
+        }
+    }
+    #Write-host "Ref6=$Ref6"
+    #---------------------------------------
+    # Ref8 CIS 2.10
+    #---------------------------------------
+    # Pull enabled network protocols for SQL from registry
+    #---------------------------------------
+    try { 
+        #write-host "Ref8"
+        $TempRef8TCP=0
+        $TempRef8NP=0
+        $TempRef8SM=0
+
+        $CIS_Status[08] = "Pass"
+        $CIS_Value[08] = ""
+
+        #registry loockup
+        $TempRef8TCP=Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer\SuperSocketNetLib\Tcp" -name "Enabled" -ErrorAction Stop
+        $TempRef8NP=Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer\SuperSocketNetLib\Np" -name "Enabled" -ErrorAction Stop
+        $TempRef8SM=Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer\SuperSocketNetLib\SM" -name "Enabled" -ErrorAction Stop
+
+        if ($TempRef8TCP.Enabled -eq 1){
+            $Ref8 += "TCP;"
+        } else {
+          $CIS_Status[08] = "Fail"
+        }
+        if ($TempRef8NP.Enabled -eq 1){
+            $Ref8 += "NP;"
+        } else {
+          $CIS_Status[08] = "Fail"
+        }
+        if ($TempRef8SM.Enabled -eq 1){
+            $Ref8 += "SM;"
+        } else {
+          $CIS_Status[08] = "Fail"
+        }
+
+        $CIS_Value[08] = $Ref8
+
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+        $Ref8="ERROR:${tempError}"
+        $CIS_Status[08] = "Fail"
+        $CIS_Value[08] = $Ref8
+        $error.Clear()
+    }
+    #Write-host "Ref8=$Ref8"
+
+    #---------------------------------------
+    # Ref9-17, 22 using same query
+    #---------------------------------------
+    # Pull SQL configuration options from 1 query.
+    #---------------------------------------
+    try {
+        #write-host "Ref9-17,22"
+
+        $CIS_Status[09] = "Fail"
+        $CIS_Status[10] = "Fail"
+        $CIS_Status[11] = "Fail"
+        $CIS_Status[12] = "Fail"
+        $CIS_Status[13] = "Fail"
+        $CIS_Status[14] = "Fail"
+        $CIS_Status[15] = "Fail"
+        $CIS_Status[16] = "Fail"
+        $CIS_Status[17] = "Fail"
+        $CIS_Status[22] = "Fail"
+
+        $TempRef = Invoke-Sqlcmd -Query "SELECT name,CAST(value as int) as tempvalue,CAST(value_in_use as int) as tempvalue_in_use FROM sys.configurations;"  -ServerInstance $instname -ErrorAction Stop
+        
+        # Cycle thru configuration settings looking for certain settings.
+        foreach ($tempitem in $TempRef){
+            ## write-host "REF9-17,22="$tempitem.name $tempitem.tempvalue $tempitem.tempvalue_in_use;
+            if ($tempitem.tempvalue_in_use = 0) {
+              ## write-host "Ref9-17,22  Set to DISABLED";
+              $ComplianceResult=$tempitem.name + ":DISABLED";
+            } else {
+              ## write-host "Ref9-17,22  Set to ENABLED";
+              $ComplianceResult=$tempitem.name + ":ENABLED";
+            };
+            ## write-host "ComplianceResult=["$ComplianceResult"]";
+            switch ($tempitem.name) {
+            
+                #---------------------------------------
+                # Ref9 CIS 2.6
+                #---------------------------------------
+                "remote access" {
+                    $Ref9 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[09] = "Pass"
+                    } else {
+                      $CIS_Value[09] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref9=$Ref9"
+                    break
+                }
+                #---------------------------------------
+                # Ref10 CIS 2.7
+                #---------------------------------------
+                "remote admin connections" {
+                    $Ref10 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[10] = "Pass"
+                    } else {
+                      $CIS_Value[10] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref10=$Ref10"
+                    break
+                }
+                #---------------------------------------
+                # Ref11 CIS 2.8
+                #---------------------------------------
+                "scan for startup procs" {
+                    $Ref11 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[11] = "Pass"
+                    } else {
+                      $CIS_Value[11] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref11=$Ref11"
+                    break
+                }
+                #---------------------------------------
+                # Ref12 CIS 2.15
+                #---------------------------------------
+                "xp_cmdshell" {
+                    $Ref12 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[12] = "Pass"
+                    } else {
+                      $CIS_Value[12] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref12=$Ref12"
+                    break
+                }
+                #---------------------------------------
+                # Ref13 CIS 2.1
+                #---------------------------------------
+                "ad hoc distributed queries" {
+                    $Ref13 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[13] = "Pass"
+                    } else {
+                      $CIS_Value[13] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref13=$Ref13"
+                    break
+                }
+                #---------------------------------------
+                # Ref14 CIS 2.2
+                #---------------------------------------
+                "clr enabled" {
+                    $Ref14 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[14] = "Pass"
+                    } else {
+                      $CIS_Value[14] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref14=$Ref14"
+                    break
+                }
+                #---------------------------------------
+                # Ref15 CIS 2.3
+                #---------------------------------------
+               "cross db ownership chaining" {
+                    $Ref15 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[15] = "Pass"
+                    } else {
+                      $CIS_Value[15] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref15=$Ref15"
+                    break
+               }
+                #---------------------------------------
+                # Ref16 CIS 2.4
+                #---------------------------------------
+                "database mail xps" {
+                    $Ref16 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[16] = "Pass"
+                    } else {
+                      $CIS_Value[16] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref16=$Ref16"
+                    break
+                }
+                #---------------------------------------
+                # Ref17 CIS 2.5
+                #---------------------------------------
+                "ole automation procedures" {
+                    $Ref17 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[17] = "Pass"
+                    } else {
+                      $CIS_Value[17] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref17=$Ref17"
+                    break
+                }
+                #---------------------------------------
+                # Ref22 CIS 5.2
+                #---------------------------------------
+                "default trace enabled" {
+                    $Ref22 = $ComplianceResult
+                    if ( $tempitem.tempvalue_in_use = 0 ) {
+                      $CIS_Status[22] = "Pass"
+                    } else {
+                      $CIS_Value[22] = $tempitem.name + ":ENABLED"
+                    }
+                    #Write-host "Ref22=$Ref22"
+                    break
+                }
+
+            }
+        }
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+ 
+        $error.Clear()
+        #---------------------------------------
+        # If Invoke-SQLcmd option is not installed run the SQL native cmd
+        #---------------------------------------
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            [string]$Ref917temp = sqlcmd -S $instname -Q "SELECT name,CAST(value as int) as tempvalue,CAST(value_in_use as int) as tempvalue_in_use FROM sys.configurations;" -h -1 -X | Out-String
+            [array]$Ref917split=$Ref917temp.Split("`r`n")
+
+            foreach ($tempitem in $Ref917split) {
+                if ($tempitem.Length -eq 64) {
+
+                    [string]$row917 = $tempitem
+                    $name917=$row917.Substring(0,37).Trim()
+                    $tempvalue917=$row917.Substring(37,11).Trim()
+                    #$inuse917=$row917.Substring(47,17).Trim()
+
+                    # Cycle thru configuration settings looking for certain settings.
+
+                    #write-host "REF9-17,22="$tempitem.name $tempitem.tempvalue $tempitem.tempvalue_in_use
+                        switch ($name917) {
+            
+                            #---------------------------------------
+                            # Ref9 CIS 2.6
+                            #---------------------------------------
+                            "remote access" {
+                                $Ref9 = $tempvalue917
+                                #Write-host "Ref9=$Ref9"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref10 CIS 2.7
+                            #---------------------------------------
+                            "remote admin connections" {
+                                $Ref10 = $tempvalue917
+                                #Write-host "Ref10=$Ref10"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref11 CIS 2.8
+                            #---------------------------------------
+                            "scan for startup procs" {
+                                $Ref11 = $tempvalue917
+                                #Write-host "Ref11=$Ref11"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref12 CIS 2.15
+                            #---------------------------------------
+                            "xp_cmdshell" {
+                                $Ref12 = $tempvalue917
+                                #Write-host "Ref12=$Ref12"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref13 CIS 2.1
+                            #---------------------------------------
+                            "ad hoc distributed queries" {
+                                $Ref13 = $tempvalue917
+                                #Write-host "Ref13=$Ref13"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref14 CIS 2.2
+                            #---------------------------------------
+                            "clr enabled" {
+                                $Ref14 = $tempvalue917
+                                #Write-host "Ref14=$Ref14"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref15 CIS 2.3
+                            #---------------------------------------
+                           "cross db ownership chaining" {
+                                $Ref15 = $tempvalue917
+                                #Write-host "Ref15=$Ref15"
+                                break
+                           }
+                            #---------------------------------------
+                            # Ref16 CIS 2.4
+                            #---------------------------------------
+                            "database mail xps" {
+                                $Ref16 = $tempvalue917
+                                #Write-host "Ref16=$Ref16"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref17 CIS 2.5
+                            #---------------------------------------
+                            "ole automation procedures" {
+                                $Ref17 = $tempvalue917
+                                #Write-host "Ref17=$Ref17"
+                                break
+                            }
+                            #---------------------------------------
+                            # Ref22 CIS 5.2
+                            #---------------------------------------
+                            "default trace enabled" {
+                                $Ref22 = $tempvalue917
+                                #Write-host "Ref22=$Ref22"
+                                break
+                            }
+
+                        }
+                    }
+            }
+        } else {
+            $Ref9 = "ERROR:${tempError}"
+            $Ref10 = "ERROR:${tempError}"
+            $Ref11 = "ERROR:${tempError}"
+            $Ref12 = "ERROR:${tempError}"
+            $Ref13 = "ERROR:${tempError}"
+            $Ref14 = "ERROR:${tempError}"
+            $Ref15 = "ERROR:${tempError}"
+            $Ref16 = "ERROR:${tempError}"
+            $Ref17 = "ERROR:${tempError}"
+            $Ref22 = "ERROR:${tempError}"
+            $error.Clear()
+        }
+    }
+    
+    #---------------------------------------
+    # Ref18 CIS 2.9
+    #---------------------------------------
+    # See if the the is_trustworthy_on setting is on
+    #---------------------------------------
+    try { 
+        #write-host "Ref18"
+
+        $CIS_Status[18] = "Pass"
+        $CIS_Value[18] = ""
+
+        $TempRef18  = Invoke-Sqlcmd -Query "SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name != 'msdb';"  -ServerInstance $instname -ErrorAction Stop
+        #$TempRef18
+        foreach ($tempitem in $TempRef18.name){
+          $CIS_Status[18] = "Fail"
+          $Ref18 += "$(${tempitem});"
+          write-host "FAIL Ref18 DETAIL ${tempitem}.name"
+          $CIS_Value[18] = "See output"
+        }
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+
+        $CIS_Status[18] = "Fail"
+        $CIS_Value = $tempError
+
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            [string]$Ref18temp = sqlcmd -S $instname -Q "SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name != 'msdb';" -h -1 -X | Out-String
+            [array]$Ref18split=$Ref18temp.Split("`r`n")
+
+            foreach ($tempitem in $Ref18split) {
+               [string]$temp18=$tempitem
+               if ($temp18.Length -eq 128){
+                    $temp18trim = $temp18.Trim()
+                    $Ref18 += "$temp18trim;"
+               }
+            }
+        }
+        else {
+            $Ref18 = "ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref18=$Ref18"
+    #---------------------------------------
+    # Ref19 CIS 2.12
+    #---------------------------------------
+    # Query the registry to see if the Instance is hidden, only for non-clustered instances
+    #---------------------------------------
+    try {
+            #write-host "Ref19"
+
+            $CIS_Status[19] = "Pass"
+
+            #write-host "In Ref19 with [${tempinst}]"
+
+            #---------------------------------------
+            # Query the registry to see if the Instance is hidden
+            #---------------------------------------
+            $TempRef19 = Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer\SuperSocketNetLib\" -name "HideInstance" -ErrorAction Stop
+            #Write-Host $(${TempRef19}.HideInstance)
+            if ($(${TempRef19}.HideInstance) -eq 1){
+                $EnabledRef19 ="Yes"
+            } else {
+                $EnabledRef19 ="No"
+            }
+            #---------------------------------------
+            # Query to see if the instance is clustered
+            #---------------------------------------
+            $Temp2Ref19 = Invoke-Sqlcmd -Query "SELECT SERVERPROPERTY('IsClustered') as IsClustered" -ErrorAction Stop
+            if ($(${Temp2Ref19}.IsClustered) -eq 0){
+                $IsClusteredRef19 = "No"
+            }
+            else {
+                $IsClusteredRef19 = "Yes"
+            }
+            $Ref19= "HideInstance=${EnabledRef19},Clustered=${IsClusteredRef19}"
+            if ( $IsClusteredRef19 = "Yes" ) {
+              if ( $EnabledRef19 = "No" ) {
+                $CIS_Status[19] = "Fail"
+              }
+            }
+            $CIS_Value[19] = $Ref19
+    }
+    catch {
+
+
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+    
+        $CIS_Status[19] = "Fail"
+        $CIS_Value[19] = $tempError
+
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            #---------------------------------------
+            # Query the registry to see if clustered
+            #---------------------------------------
+            $TempRef19 = Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer\SuperSocketNetLib\" -name "HideInstance" -ErrorAction Stop
+            #Write-Host $(${TempRef19}.HideInstance)
+            if ($(${TempRef19}.HideInstance) -eq 1){
+                $EnabledRef19 ="Yes"
+            }
+            else {
+                $EnabledRef19 ="No"
+            }
+
+            [string]$Ref19temp = sqlcmd -S $instname -Q "SELECT SERVERPROPERTY('IsClustered') as IsClustered;"  -h -1 -X | Out-String
+            $Ref19clus = $Ref19temp.Trim()
+            $Ref19clus
+            if ($Ref19clus -eq "1"){
+                $IsClusteredRef19 = "Yes"
+            } else {
+                $IsClusteredRef19 = "No"
+            }
+            $Ref19= "HideInstance=${EnabledRef19},Clustered=${IsClusteredRef19}"
+        } else {
+            $Ref19 = "ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref19=${Ref19}"
+    #---------------------------------------
+    # Ref20 CIS 5.1
+    #---------------------------------------
+    # Query the registry to see the number of error logs
+    #---------------------------------------
+    try {
+
+        #write-host "Ref20"
+        
+        $TempRef20  = Get-ItemProperty -path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\${tempinst}\MSSQLServer" -name "NumErrorLogs" -ErrorAction Stop
+        if ($(${TempRef20}.NumErrorLogs) -eq ""){
+            $TempRef20 = "NOT_SET"
+        } else {
+          $Ref20 = $(${TempRef20}.name)
+        }
+
+        if ( $TempRef20.NumErrorLogs -ge 12 ) {
+          $CIS_Status[20] = "Pass"
+        } else {
+          $CIS_Status[20] = "Fail"
+          $CIS_Value[20] = $Ref20
+        }
+    }
+    catch {
+        $TempError=($error[0] | out-string)
+
+        $CIS_Status[20] = "Fail"
+        $CIS_Value[20] = "NumErrorLogs NOT Set"
+
+        if ($TempError.SubString(0,[math]::min(55,${TempError}.length) ) -eq "Get-ItemProperty : Property NumErrorLogs does not exist"){
+            $Ref20 = 0
+        } else {
+            $tempError=$tempError.Replace("`r`n","|") 
+            $Ref20 = "ERROR:${TempError}"
+            $error.Clear()
+        }
+    }
+    #Write-host "Ref20=$Ref20"
+    #---------------------------------------
+    # Ref23 CIS 5.3
+    #---------------------------------------
+    # Query to see the audit level
+    #---------------------------------------
+    try {
+        #write-host "Ref23"
+
+        $TempRef23  = Invoke-Sqlcmd -Query "EXEC xp_loginconfig 'audit level';" -ErrorAction Stop
+        #"Ref23=$TempRef23"
+        $Ref23 = $(${TempRef23}.config_value)
+        if ( $TempRef23.config_value = 1 ) {
+          $CIS_Status[23] = "Pass"
+        } else {
+          $CIS_Status[23] = "Fail"
+        }
+        $CIS_Value[23] = $TempRef23.config_value
+   }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+
+        $CIS_Status[23] = "Fail"
+        $CIS_Value[23]= "audit level NOT set"
+
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            #---------------------------------------
+            # Backup Query audit level 
+            #---------------------------------------
+            [string]$Ref23temp = sqlcmd -S $instname -Q "EXEC xp_loginconfig 'audit level';"  -h -1 -X | Out-String
+            $Ref23=$Ref23temp.Trim()
+        } else {
+            $Ref23 = "ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref23=$Ref23"
+    #---------------------------------------
+    # Ref24 CIS 5.4
+    #---------------------------------------
+    # Query to see if server auditing is enabled
+    #---------------------------------------
+    try {
+        #write-host "Ref24"
+
+        $CIS_Status[24] = "Fail"
+
+        $TempRef24  = Invoke-Sqlcmd -Query "SELECT is_state_enabled  FROM sys.server_audits"  -ServerInstance $instname -ErrorAction Stop -OutVariable sqlReturn
+        $Ref24 = ${TempRef24}.is_state_enabled 
+        if ($TempRef24.is_state_enabled = 1) {
+          $CIS_Status[24] = "Pass"
+        } else {
+          $CIS_Status[24] = "Fail"
+        }
+
+        $CIS_Value[24] = $Ref24
+
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+
+        $CIS_Status[24] = "Fail"
+        $CIS_Value[24] = "NOT set"
+
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            #---------------------------------------
+            # Backup Query to see if server auditing is enabled
+            #---------------------------------------
+            [string]$Ref24temp = sqlcmd -S $instname -Q "SELECT cast(is_state_enabled AS INT)  AS Casted FROM sys.server_audits;"  -h -1 -X | Out-String
+            $Ref24temp=$Ref24temp.Trim()
+            if ($Ref24temp -eq "(0 rows affected)"){
+                $Ref24=""
+            } else {
+                $Ref24=$Ref24temp
+            }
+        } else {
+            $Ref24 = "ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref24=$Ref24"
+    
+    #---------------------------------------
+    # Ref1 Corp 22.4
+    #---------------------------------------
+    # Query to see if what accounts have 'master' as their default db
+    #---------------------------------------
+    try {
+        #write-host "Ref1"
+
+        $DefaultDBIsMasterCount=0
+        $TempRef1  = Invoke-Sqlcmd -Query "SELECT p.name FROM sys.server_principals p JOIN sys.syslogins s ON p.sid = s.sid WHERE   p.type_desc IN ('SQL_LOGIN', 'WINDOWS_LOGIN', 'WINDOWS_GROUP') AND p.name NOT LIKE '##%' AND p.default_database_name = 'master' AND s.sysadmin = 1"  -ServerInstance $instname -Erroraction Stop       
+        $CIS_Status[01] = "Pass"
+       
+        foreach ($tempitem in $TempRef1) {
+          $CIS_Status[01] = "Fail"
+          $Ref1 += "Account=$(${tempitem}.name),DB=$(${tempitem}.default_database_name);"
+          write-host "FAIL Ref1 DETAIL Account=$(${tempitem}.name),DB=$(${tempitem}.default_database_name)"
+          $CIS_Value[01]="See output"
+        }
+ 
+    }
+    catch {
+        $CIS_Status[01]="Fail"
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+        $CIS_Value[01] = "Query failed"
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            #---------------------------------------
+            # Backup Query to see if what accounts have 'master' as their default db
+            #---------------------------------------
+            [string]$Ref1temp = sqlcmd -S $instname -Q "select name,default_database_name from sys.server_principals where default_database_name in ( 'master';" -h -1 -X | Out-String
+            [array]$Ref1split=$Ref1temp.Split("`r`n")
+
+            foreach ($tempitem in $Ref1split) {
+                [string]$temp1=$tempitem
+                if ($temp1.Length -eq 257) {
+                   $username1=$temp1.Substring(0,129).Trim()
+                   $dbname1=$temp1.Substring(129,128).Trim()
+                   $Ref1 += "Account=$username1,DB=$dbname1;"
+                }
+            }
+        }
+        else {
+            $Ref1 ="ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref1=$Ref1"
+    #---------------------------------------
+    # Ref2 Corp 3.8
+    #---------------------------------------
+    # Query who has the default dbs of master, model or msdb
+    #---------------------------------------
+    try {
+        #write-host "Ref2"
+
+        $CIS_Status[02] = "Pass"
+        $CIS_Value[02] = "Okay"
+
+        $TempRef2  = Invoke-Sqlcmd -Query "SELECT p.name
+FROM    sys.server_principals p
+        JOIN sys.syslogins s ON p.sid = s.sid
+WHERE   p.type_desc IN ('SQL_LOGIN', 'WINDOWS_LOGIN', 'WINDOWS_GROUP','server_role')
+        -- Logins that are not process logins
+         AND p.name NOT LIKE '##%'
+		AND p.default_database_name in ('master', 'model','msdb')
+        AND s.sysadmin = 0"  -ServerInstance $instname -ErrorAction Stop
+        foreach ($tempitem in $TempRef2) {
+          $Ref2 += "Account=$(${tempitem}.name),DB=$(${tempitem}.default_database_name);"
+          write-host "FAIL Ref2 DETAIL Account=$(${tempitem}.name),DB=$(${tempitem}.default_database_name)"
+
+          $CIS_Status[02] = "Fail"
+          $CIS_Value[02] = "See output"
+        }
+    }
+    catch {
+        $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+
+        $CIS_Status[02] = "Fail"
+        $CIS_Value[02] = "Query failed"
+
+        $error.Clear()
+        if ($tempError -Like "*is not recognized as the name of a*") {
+            #---------------------------------------
+            # Backup Query who has the default dbs of master, model or msdb
+            #---------------------------------------
+            [string]$Ref2temp = sqlcmd -S $instname -Q "select name,default_database_name from sys.server_principals where default_database_name in ('master', 'model', 'msdb');"  -h -1 -X | Out-String
+            [array]$Ref2split=$Ref2temp.Split("`r`n")
+
+            foreach ($tempitem in $Ref2split) {
+                [string]$temp2=$tempitem
+
+                if ($temp2.Length -eq 257) {
+                    $username2=$temp2.Substring(0,129).Trim()
+                    $dbname2=$temp2.Substring(129,128).Trim()
+                    $Ref2 += "Account=$username2,DB=$dbname2;"
+                }
+            }
+        } else {
+            $Ref2 = "ERROR:${tempError}"
+        }
+    }
+    #Write-host "Ref2=$Ref2"
+
+    #----------------------------------
+    #Database compliance checks
+    #----------------------------------
+    # Query the databases that are part of the instance
+    #---------------------------------------
+
+    $DBnamerows = Invoke-Sqlcmd -Query "select name from sys.databases WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')"  -ServerInstance $instname -ErrorAction Stop
+    $NumDBs = $DBnamerows.Count
+    
+    write-host "Number of DBs to evaluate:  [$NumDBs]"
+
+        # For each Database in the server instance
+        foreach ($DBName in $DBnamerows) {
+           
+           write-host $DBName.name
+
+            $DatabaseName = $DBName.name
+            write-host "Evaluating DB [$DatabaseName]"
+            
+            #Init database variables
+ 
+            $Replica_State="Unknown";
+ 
+            #---------------------------------------
+            # Ref3 Corp 22.3
+            #---------------------------------------
+            # Get database name
+            #---------------------------------------
+            $Ref3 = $DatabaseName
+
+            $ShouldBeEmpty = Select-String -Pattern "[pub|Northwind|Contoso|AdventureWork]" -InputObject $DBname 
+            if ($ShouldBeEmpty.length -gt 0) {
+              $CIS_Status[03]="Fail"
+              $CIS_Value[03]=$ShouldBeEmpty
+            } else {
+              $CIS_Status[03]="Pass"
+              $CIS_Status[03]=""
+            }
+            #Write-host "Ref3=$Ref3"
+
+            #---------------------------------------
+            # Ref4 Corp 3.2
+            #---------------------------------------
+            # Query if guest has any connect permissions
+            #---------------------------------------
+            #write-host "Ref4"
+
+            $CIS_Status[04] = "Pass"
+            $CIS_Value[04] = ""
+
+            Write-Host "inst [$instname] :: database [$DatabaseName]"
+            try {
+                           
+                $TempRef4  = Invoke-Sqlcmd -Query "SELECT [permission_name] FROM sys.database_permissions WHERE [grantee_principal_id] = DATABASE_PRINCIPAL_ID('guest') AND [state_desc] LIKE 'GRANT%' AND [permission_name] = 'CONNECT' AND DB_NAME() NOT IN ('master','tempdb','msdb');" -ServerInstance $instname -Database $DatabaseName  -ErrorAction Stop
+                foreach ($tempitem in $TempRef4) {
+                  if ( ${tempitem}.permission_name -eq "connect" ) {
+                    $CIS_Status[04]="Fail"
+                  }
+                  $Ref4 = "$(${tempitem}.permission_name)"
+                  $CIS_Value[04]=$Ref4
+                  $Replica_State="PRIMARY";
+                }
+            
+            }
+            catch {
+                ##write-host "Ref4 caught an error Error [" $Error "]"            
+
+                $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+				$CIS_Status[04]="Fail"
+                $CIS_Value[04]=$tempError
+                $error.Clear()
+                #---------------------------------------
+                # If the database is part of an availability group, an error will be thrown.
+                # Query must then use a sqlcmd query to allow for read only queries
+                #---------------------------------------
+                if ($tempError -Like "*Cannot open database*") {
+                  ##write-host "Ref4 must be a standby";
+                  $Replica_State="SECONDARY";
+                  $Ref4="Cannot evaluate STANDBY";
+                } else {
+                    if (($tempError.Contains("availability group")) -or ($tempError -Like "*is not recognized as the name of a*")) {
+                      write-host "trying to access [$DBname] for Ref4"
+                      $Ref4temp = sqlcmd -d $DBname -Q "SELECT [permission_name] FROM sys.database_permissions WHERE [grantee_principal_id] = DATABASE_PRINCIPAL_ID('guest') AND [state_desc] LIKE 'GRANT%' AND [permission_name] = 'CONNECT' AND DB_NAME() NOT IN ('master','tempdb','msdb');"  -h -1 -X
+                      if ($Ref4temp.Contains("Connect")) {
+                        $Ref4 = "Connect"
+                      } else {
+                        $Ref4 = ""
+                      }
+                   } else {
+                     $Ref4 = "ERROR:${tempError}"
+                   }
+                }
+                
+            }
+            #Write-host "Ref4=$Ref4"
+            #---------------------------------------
+            # Ref5 Corp 3.3
+            #---------------------------------------
+            # Query for orphaned users
+            #---------------------------------------
+            try {
+
+##                $TempRef5  = Invoke-Sqlcmd -Query "EXEC sp_change_users_login @Action='Report';" -ServerInstance $instname -Database $DBname -Erroraction Stop
+##                #$tempRef5
+##                foreach ($tempitem in $TempRef5){
+##                    $Ref5 += "$(${tempitem}.Username);"
+##                }
+
+                  $Ref5="OUT-OF-SCOPE"
+
+                  $CIS_Status[05]="Out-Of-Scope"
+                  $CIS_Value[05]="Out-Of-Scope"
+            }
+            catch {
+                $tempError=($Error[0] | out-string).Replace("`r`n","|") 
+                #---------------------------------------
+                # If the database is part of an availability group, an error will be thrown.
+                # Query must then use a sqlcmd query to allow for read only queries
+                #---------------------------------------
+                if ($tempError -Like "*Cannot open database*") {
+                  $Ref5="Cannot evaluate STANDBY";
+                } else {
+                  if (($tempError -Like "availability group") -or ($tempError -Like "*is not recognized as the name of a*")) {
+                    write-host "in Ref5 with ${datab}"
+                    $Ref5temp = sqlcmd -d ${datab} -Q "EXEC sp_change_users_login @Action='Report';"  -h -1 -X | Out-String
+                    if ($Ref5temp.trim() -ne "") {
+                        $Ref5temp2=$Ref5temp.split("`n`r")
+                        foreach ($myitem in $Ref5temp2) {
+                            $Ref5temp3=$myitem.Split("0xC")
+                            $Ref5temp4 = $Ref5temp3[0].Trim()
+                            if ($Ref5temp4 -ne ""){
+                                $Ref5 += "${Ref5temp4};"
+                            }
+                        }
+                    } else {
+                        $Ref5 = ""
+                    }
+                }  else {
+                    $Ref5 = "ERROR:${tempError}"
+                }
+              }
+            }
+            #Write-host "Ref5=$Ref5"
+
+            #---------------------------------------
+            # Output database info out to a temp salida2.txt file 
+            #---------------------------------------
+
+           
+            #"${Compname}${tab}${InstName}${tab}${DatabaseName}${tab}${Ref1}${tab}${Ref2}${tab}${Ref3}${tab}${Ref4}${tab}${Ref5}${tab}${Ref6}${tab}${Ref7}${tab}${Ref8}${tab}${Ref9}${tab}${Ref10}${tab}${Ref11}${tab}${Ref12}${tab}${Ref13}${tab}${Ref14}${tab}${Ref15}${tab}${Ref16}${tab}${Ref17}${tab}${Ref18}${tab}${Ref19}${tab}${Ref20}${tab}${Ref21}${tab}${Ref22}${tab}${Ref23}${tab}${Ref24}" | Out-File -encoding ascii -FilePath $OutputFile -Append
+
+            #write-host "Ready to write compliance results"
+
+            for ($i=1; $i -le $NUMBER_OF_CIS_RULES; $i++) {
+              $A_Reference = $CIS_Reference[$i]
+              $A_Status = $CIS_Status[$i]
+              $A_Value = $CIS_Value[$i]
+              "COMPLIANCE${tab}${i}${tab}${A_Reference}${tab}${A_Value}${tab}${Compname}${tab}${DatabaseName}${tab}${A_Status}" | Out-File -encoding ascii -FilePath $OutputFile -Append
+            }
+ 
+      $TimeOfDay = Get-Date -Format o            
+      "${Compname} end execution for ${DatabaseName} ${TimeOfDay}" | Out-File -encoding ascii -FilePath $OutputFile -Append
+  }
+
+
+}
